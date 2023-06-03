@@ -8,6 +8,7 @@ use crate::{
     curves::{Ep, EpAffine, Eq, EqAffine},
     fields::{Fp, Fq},
     group::Curve,
+    EpUncompressed, EqUncompressed,
 };
 
 /// Serializes bytes to human readable or compact representation.
@@ -130,6 +131,56 @@ impl<'de> Deserialize<'de> for Eq {
     }
 }
 
+impl Serialize for EpUncompressed {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() {
+            hex::serde::serialize(self.0, s)
+        } else {
+            serde_bytes::serialize(self.as_ref(), s)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for EpUncompressed {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let array = if d.is_human_readable() {
+            hex::serde::deserialize(d)?
+        } else {
+            let slice: &[u8] = serde_bytes::deserialize(d)?;
+            let array: [u8; 64] = slice
+                .try_into()
+                .map_err(|_| D::Error::invalid_length(slice.len(), &"[u8; 64]"))?;
+            array
+        };
+        Ok(Self(array))
+    }
+}
+
+impl Serialize for EqUncompressed {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if s.is_human_readable() {
+            hex::serde::serialize(self.0, s)
+        } else {
+            serde_bytes::serialize(self.as_ref(), s)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for EqUncompressed {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let array = if d.is_human_readable() {
+            hex::serde::deserialize(d)?
+        } else {
+            let slice: &[u8] = serde_bytes::deserialize(d)?;
+            let array: [u8; 64] = slice
+                .try_into()
+                .map_err(|_| D::Error::invalid_length(slice.len(), &"[u8; 64]"))?;
+            array
+        };
+        Ok(Self(array))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,7 +188,7 @@ mod tests {
     use core::fmt::Debug;
 
     use ff::Field;
-    use group::{prime::PrimeCurveAffine, Curve, Group};
+    use group::{prime::PrimeCurveAffine, Curve, Group, UncompressedEncoding};
     use rand::SeedableRng;
     use rand_xorshift::XorShiftRng;
 
@@ -439,6 +490,57 @@ mod tests {
             bincode::deserialize::<Eq>(&[
                 0, 0, 0, 0, 33, 235, 70, 140, 221, 168, 148, 9, 252, 152, 70, 34, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 64
+            ])
+            .unwrap(),
+            f
+        );
+    }
+
+    #[test]
+    fn serde_ep_uncompressed() {
+        let mut rng = XorShiftRng::from_seed([
+            0x59, 0x62, 0xbe, 0x5d, 0x76, 0x3d, 0x31, 0x8d, 0x17, 0xdb, 0x37, 0x32, 0x54, 0x06,
+            0xbc, 0xe5,
+        ]);
+
+        for _ in 0..100 {
+            let f = Ep::random(&mut rng).to_affine().to_uncompressed();
+            test_roundtrip(&f);
+        }
+
+        let f = Ep::identity().to_affine().to_uncompressed();
+        test_roundtrip(&f);
+        assert_eq!(
+            serde_json::from_slice::<EpUncompressed>(
+                br#""00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040""#
+            )
+            .unwrap(),
+            f
+        );
+        assert_eq!(
+            bincode::deserialize::<EpUncompressed>(&[
+                64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64
+            ])
+            .unwrap(),
+            f
+        );
+
+        let f = Ep::generator().to_affine().to_uncompressed();
+        test_roundtrip(&f);
+        assert_eq!(
+            serde_json::from_slice::<EpUncompressed>(
+                br#""00000000ed302d991bf94c09fc984622000000000000000000000000000000400200000000000000000000000000000000000000000000000000000000000000""#
+            )
+            .unwrap(),
+            f
+        );
+        assert_eq!(
+            bincode::deserialize::<EpUncompressed>(&[
+                64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 237, 48, 45, 153, 27, 249, 76, 9, 252, 152,
+                70, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 2, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
             ])
             .unwrap(),
             f
