@@ -1,7 +1,12 @@
+use core::{fmt, marker::PhantomData};
+
+use alloc::format;
 use ff::PrimeField;
 use group::GroupEncoding;
 use serde_crate::{
-    de::Error as DeserializeError, Deserialize, Deserializer, Serialize, Serializer,
+    de::{Error as DeserializeError, SeqAccess, Visitor},
+    ser::SerializeTuple,
+    Deserialize, Deserializer, Serialize, Serializer,
 };
 
 use crate::{
@@ -131,12 +136,47 @@ impl<'de> Deserialize<'de> for Eq {
     }
 }
 
+/// Custom visitor implementation for large arrays (N > 32).
+/// 
+/// Taken from: https://github.com/serde-rs/serde/issues/631#issuecomment-322677033
+struct ArrayVisitor<T, const N: usize> {
+    element: PhantomData<T>,
+}
+
+impl<'de, T, const N: usize> Visitor<'de> for ArrayVisitor<T, N>
+where
+    T: Default + Copy + Deserialize<'de>,
+{
+    type Value = [T; N];
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str(&format!("an array of length {}", N))
+    }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<[T; N], A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut arr = [T::default(); N];
+        for i in 0..N {
+            arr[i] = seq
+                .next_element()?
+                .ok_or_else(|| A::Error::invalid_length(i, &self))?;
+        }
+        Ok(arr)
+    }
+}
+
 impl Serialize for EpUncompressed {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         if s.is_human_readable() {
             hex::serde::serialize(self.0, s)
         } else {
-            serde_bytes::serialize(self.as_ref(), s)
+            let mut seq = s.serialize_tuple(64)?;
+            for elem in self.as_ref() {
+                seq.serialize_element(elem)?;
+            }
+            seq.end()
         }
     }
 }
@@ -146,11 +186,10 @@ impl<'de> Deserialize<'de> for EpUncompressed {
         let array = if d.is_human_readable() {
             hex::serde::deserialize(d)?
         } else {
-            let slice: &[u8] = serde_bytes::deserialize(d)?;
-            let array: [u8; 64] = slice
-                .try_into()
-                .map_err(|_| D::Error::invalid_length(slice.len(), &"[u8; 64]"))?;
-            array
+            let visitor = ArrayVisitor {
+                element: PhantomData,
+            };
+            d.deserialize_tuple(64, visitor)?
         };
         Ok(Self(array))
     }
@@ -161,7 +200,11 @@ impl Serialize for EqUncompressed {
         if s.is_human_readable() {
             hex::serde::serialize(self.0, s)
         } else {
-            serde_bytes::serialize(self.as_ref(), s)
+            let mut seq = s.serialize_tuple(64)?;
+            for elem in self.as_ref() {
+                seq.serialize_element(elem)?;
+            }
+            seq.end()
         }
     }
 }
@@ -171,11 +214,10 @@ impl<'de> Deserialize<'de> for EqUncompressed {
         let array = if d.is_human_readable() {
             hex::serde::deserialize(d)?
         } else {
-            let slice: &[u8] = serde_bytes::deserialize(d)?;
-            let array: [u8; 64] = slice
-                .try_into()
-                .map_err(|_| D::Error::invalid_length(slice.len(), &"[u8; 64]"))?;
-            array
+            let visitor = ArrayVisitor {
+                element: PhantomData,
+            };
+            d.deserialize_tuple(64, visitor)?
         };
         Ok(Self(array))
     }
@@ -519,9 +561,9 @@ mod tests {
         );
         assert_eq!(
             bincode::deserialize::<EpUncompressed>(&[
-                64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 64
             ])
             .unwrap(),
             f
@@ -538,9 +580,9 @@ mod tests {
         );
         assert_eq!(
             bincode::deserialize::<EpUncompressed>(&[
-                64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 237, 48, 45, 153, 27, 249, 76, 9, 252, 152,
-                70, 34, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 2, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                0, 0, 0, 0, 237, 48, 45, 153, 27, 249, 76, 9, 252, 152, 70, 34, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
             ])
             .unwrap(),
             f
